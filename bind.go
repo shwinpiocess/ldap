@@ -119,7 +119,7 @@ func (l *Conn) Bind(username, password string) error {
 }
 
 func (l *Conn) BindNTLM(username, password string) error {
-	return l.bindSicilyNegotiate(username, password)
+	return l.bindSicilyPackageDiscovery(username, password)
 }
 
 func (l *Conn) bindSicilyPackageDiscovery(username, password string) error {
@@ -133,6 +133,10 @@ func (l *Conn) bindSicilyPackageDiscovery(username, password string) error {
 	bindRequest.AppendChild(sicilyPackageDiscovery)
 
 	packet.AppendChild(bindRequest)
+
+	if l.Debug {
+		ber.PrintPacket(packet)
+	}
 
 	msgCtx, err := l.sendMessage(packet)
 	if err != nil {
@@ -151,9 +155,6 @@ func (l *Conn) bindSicilyPackageDiscovery(username, password string) error {
 	}
 
 	if l.Debug {
-		if err = addLDAPDescriptions(packet); err != nil {
-			return err
-		}
 		ber.PrintPacket(packet)
 	}
 
@@ -192,6 +193,10 @@ func (l *Conn) bindSicilyNegotiate(username, password string) error {
 
 	packet.AppendChild(bindRequest)
 
+	if l.Debug {
+		ber.PrintPacket(packet)
+	}
+
 	msgCtx, err := l.sendMessage(packet)
 	if err != nil {
 		return err
@@ -209,9 +214,6 @@ func (l *Conn) bindSicilyNegotiate(username, password string) error {
 	}
 
 	if l.Debug {
-		if err = addLDAPDescriptions(packet); err != nil {
-			return err
-		}
 		ber.PrintPacket(packet)
 	}
 
@@ -258,6 +260,10 @@ func (l *Conn) bindSicilyResponse(username, password string, authenticateMessage
 
 	packet.AppendChild(bindRequest)
 
+	if l.Debug {
+		ber.PrintPacket(packet)
+	}
+
 	msgCtx, err := l.sendMessage(packet)
 	if err != nil {
 		return err
@@ -275,9 +281,6 @@ func (l *Conn) bindSicilyResponse(username, password string, authenticateMessage
 	}
 
 	if l.Debug {
-		if err = addLDAPDescriptions(packet); err != nil {
-			return err
-		}
 		ber.PrintPacket(packet)
 	}
 
