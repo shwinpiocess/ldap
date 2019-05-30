@@ -3,7 +3,7 @@ package ldap
 import (
 	"errors"
 	"fmt"
-	"ldapauth/go-ntlmssp"
+	"github.com/shwinpiocess/ldap/go-ntlmssp"
 
 	"gopkg.in/asn1-ber.v1"
 )
