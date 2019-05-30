@@ -3,6 +3,7 @@ package ldap
 import (
 	"errors"
 	"fmt"
+	"ldapauth/go-ntlmssp"
 
 	"gopkg.in/asn1-ber.v1"
 )
@@ -114,6 +115,187 @@ func (l *Conn) Bind(username, password string) error {
 		AllowEmptyPassword: false,
 	}
 	_, err := l.SimpleBind(req)
+	return err
+}
+
+func (l *Conn) BindNTLM(username, password string) error {
+	return l.bindSicilyNegotiate(username, password)
+}
+
+func (l *Conn) bindSicilyPackageDiscovery(username, password string) error {
+	packet := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
+	packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
+	bindRequest := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationBindRequest, nil, "Bind Request")
+	bindRequest.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 3, "Version"))
+	bindRequest.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "Name"))
+
+	sicilyPackageDiscovery := ber.Encode(ber.ClassContext, ber.TypePrimitive, ber.TagRealFloat, nil, "SicilyPackageDiscovery")
+	bindRequest.AppendChild(sicilyPackageDiscovery)
+
+	packet.AppendChild(bindRequest)
+
+	msgCtx, err := l.sendMessage(packet)
+	if err != nil {
+		return err
+	}
+	defer l.finishMessage(msgCtx)
+
+	packetResponse, ok := <-msgCtx.responses
+	if !ok {
+		return NewError(ErrorNetwork, errors.New("ldap: response channel closed"))
+	}
+	packet, err = packetResponse.ReadPacket()
+	l.Debug.Printf("%d: got response %p", msgCtx.id, packet)
+	if err != nil {
+		return err
+	}
+
+	if l.Debug {
+		if err = addLDAPDescriptions(packet); err != nil {
+			return err
+		}
+		ber.PrintPacket(packet)
+	}
+
+	result := &SimpleBindResult{
+		Controls: make([]Control, 0),
+	}
+
+	if len(packet.Children) == 3 {
+		for _, child := range packet.Children[2].Children {
+			decodedChild, decodeErr := DecodeControl(child)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode child control: %s", decodeErr)
+			}
+			result.Controls = append(result.Controls, decodedChild)
+		}
+	}
+
+	err = GetLDAPError(packet)
+	if err != nil {
+		return err
+	}
+
+	return l.bindSicilyNegotiate(username, password)
+}
+
+func (l *Conn) bindSicilyNegotiate(username, password string) error {
+	packet := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
+	packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
+	bindRequest := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationBindRequest, nil, "Bind Request")
+	bindRequest.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 3, "Version"))
+	bindRequest.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "NTLM", "Name"))
+
+	nm, err := ntlmssp.NewNegotiateMessage("", "")
+
+	bindRequest.AppendChild(ber.NewString(ber.ClassContext, ber.TypePrimitive, 10, string(nm), "SicilyNegotiate"))
+
+	packet.AppendChild(bindRequest)
+
+	msgCtx, err := l.sendMessage(packet)
+	if err != nil {
+		return err
+	}
+	defer l.finishMessage(msgCtx)
+
+	packetResponse, ok := <-msgCtx.responses
+	if !ok {
+		return NewError(ErrorNetwork, errors.New("ldap: response channel closed"))
+	}
+	packet, err = packetResponse.ReadPacket()
+	l.Debug.Printf("%d: got response %p", msgCtx.id, packet)
+	if err != nil {
+		return err
+	}
+
+	if l.Debug {
+		if err = addLDAPDescriptions(packet); err != nil {
+			return err
+		}
+		ber.PrintPacket(packet)
+	}
+
+	result := &SimpleBindResult{
+		Controls: make([]Control, 0),
+	}
+
+	if len(packet.Children) == 3 {
+		for _, child := range packet.Children[2].Children {
+			decodedChild, decodeErr := DecodeControl(child)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode child control: %s", decodeErr)
+			}
+			result.Controls = append(result.Controls, decodedChild)
+		}
+	}
+
+	err = GetLDAPError(packet)
+	if err != nil {
+		return err
+	}
+
+	authenticateMessage, err := ntlmssp.ProcessChallenge(packet.Bytes()[15:229], username, password)
+	if err != nil {
+		return err
+	}
+
+	err = l.bindSicilyResponse(username, password, authenticateMessage)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (l *Conn) bindSicilyResponse(username, password string, authenticateMessage []byte) error {
+	packet := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP Request")
+	packet.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, l.nextMessageID(), "MessageID"))
+	bindRequest := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ApplicationBindRequest, nil, "Bind Request")
+	bindRequest.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagInteger, 3, "Version"))
+	bindRequest.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "Name"))
+
+	bindRequest.AppendChild(ber.NewString(ber.ClassContext, ber.TypePrimitive, 11, string(authenticateMessage), "SicilyResponse"))
+
+	packet.AppendChild(bindRequest)
+
+	msgCtx, err := l.sendMessage(packet)
+	if err != nil {
+		return err
+	}
+	defer l.finishMessage(msgCtx)
+
+	packetResponse, ok := <-msgCtx.responses
+	if !ok {
+		return NewError(ErrorNetwork, errors.New("ldap: response channel closed"))
+	}
+	packet, err = packetResponse.ReadPacket()
+	l.Debug.Printf("%d: got response %p", msgCtx.id, packet)
+	if err != nil {
+		return err
+	}
+
+	if l.Debug {
+		if err = addLDAPDescriptions(packet); err != nil {
+			return err
+		}
+		ber.PrintPacket(packet)
+	}
+
+	result := &SimpleBindResult{
+		Controls: make([]Control, 0),
+	}
+
+	if len(packet.Children) == 3 {
+		for _, child := range packet.Children[2].Children {
+			decodedChild, decodeErr := DecodeControl(child)
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode child control: %s", decodeErr)
+			}
+			result.Controls = append(result.Controls, decodedChild)
+		}
+	}
+
+	err = GetLDAPError(packet)
 	return err
 }
 
